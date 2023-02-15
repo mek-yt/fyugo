@@ -15,9 +15,11 @@ import (
 	"fyne.io/fyne/v2/theme"
 
 	"fyne.io/fyne/v2/widget"
-	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	fork "github.com/neruyzo/go-fork"
+	"github.com/neruyzo/go-fork"
 	"github.com/skratchdot/open-golang/open"
 )
 
@@ -57,6 +59,11 @@ func Home(a fyne.App, w fyne.Window, hugo *fork.Function) {
 	gitUser := binding.BindPreferenceString("GitUser", a.Preferences())
 	gitRepository := binding.BindPreferenceString("GitRepository", a.Preferences())
 
+	branch := "master"
+
+	gitUsername := binding.BindPreferenceString("GitUsername", a.Preferences())
+	gitEmail := binding.BindPreferenceString("GitEmail", a.Preferences())
+
 	gitKey := binding.BindPreferenceString("GitKey", a.Preferences())
 
 	labelRun := binding.NewString()
@@ -66,6 +73,9 @@ func Home(a fyne.App, w fyne.Window, hugo *fork.Function) {
 	entryGitPort := widget.NewEntryWithData(gitPort)
 	entryGitUser := widget.NewEntryWithData(gitUser)
 	entryGitRepository := widget.NewEntryWithData(gitRepository)
+
+	entryGitUsername := widget.NewEntryWithData(gitUsername)
+	entryGitEmail := widget.NewEntryWithData(gitEmail)
 
 	entryDirectory := widget.NewEntryWithData(projectDirectory)
 	setDirectory := widget.NewButtonWithIcon("Set directory", theme.FolderIcon(), func() {
@@ -84,11 +94,11 @@ func Home(a fyne.App, w fyne.Window, hugo *fork.Function) {
 		fd.Show()
 	})
 
-	pull := widget.NewButtonWithIcon("Pull", theme.DownloadIcon(), func() {
+	pull := widget.NewButtonWithIcon("Reset & Pull", theme.DownloadIcon(), func() {
 		projectDirectoryValue, _ := projectDirectory.Get()
 		r, _ := git.PlainOpen(projectDirectoryValue)
 		worktree, _ := r.Worktree()
-
+		
 		gitKeyValue, _ := gitKey.Get()
 
 		key, _ := os.ReadFile(gitKeyValue)
@@ -96,6 +106,11 @@ func Home(a fyne.App, w fyne.Window, hugo *fork.Function) {
 		if err != nil {
 			log.Fatalf("creating ssh auth method")
 		}
+		
+		r.Fetch(&git.FetchOptions{
+			RemoteName: "origin",
+			Auth:       publicKey,
+		})
 
 		gitUserValue, _ := gitUser.Get()
 		gitHostValue, _ := gitHost.Get()
@@ -109,9 +124,14 @@ func Home(a fyne.App, w fyne.Window, hugo *fork.Function) {
 			gitPortValue,
 			gitRepositoryValue,
 		)
+		remoteRef, err := r.Reference(plumbing.ReferenceName("refs/remotes/origin/"+branch), true)
 
+		worktree.Reset(&git.ResetOptions{
+			Mode:   git.HardReset,
+			Commit: remoteRef.Hash(),
+		})
 		worktree.Pull(&git.PullOptions{
-			Auth: publicKey,
+			Auth:      publicKey,
 			RemoteURL: urlRepository,
 			Progress:  os.Stdout,
 		})
@@ -148,11 +168,22 @@ func Home(a fyne.App, w fyne.Window, hugo *fork.Function) {
 		})
 	})
 	clone.Importance = widget.DangerImportance
-	push := widget.NewButtonWithIcon("Push", theme.UploadIcon(), func() {
+	push := widget.NewButtonWithIcon("Commit & Push", theme.UploadIcon(), func() {
 		projectDirectoryValue, _ := projectDirectory.Get()
+		gitUsernameValue, _ := gitUsername.Get()
+		gitEmailValue, _ := gitEmail.Get()
 		r, _ := git.PlainOpen(projectDirectoryValue)
 		worktree, _ := r.Worktree()
-		worktree.Commit("feat: commit", &git.CommitOptions{All: true})
+		worktree.Commit(
+			"feat: commit",
+			&git.CommitOptions{
+				All: true,
+				Author:&object.Signature{
+					Name: gitUsernameValue,
+					Email: gitEmailValue,
+				},
+			},
+		)
 
 		gitKeyValue, _ := gitKey.Get()
 
@@ -176,7 +207,7 @@ func Home(a fyne.App, w fyne.Window, hugo *fork.Function) {
 		)
 
 		r.Push(&git.PushOptions{
-			Auth: publicKey,
+			Auth:      publicKey,
 			RemoteURL: urlRepository,
 			Progress:  os.Stdout,
 		})
@@ -260,6 +291,11 @@ func Home(a fyne.App, w fyne.Window, hugo *fork.Function) {
 		widget.NewLabel("User"), entryGitUser,
 		widget.NewLabel("Repository"), entryGitRepository,
 	)
+	authorContainer := container.New(
+		layout.NewFormLayout(),
+		widget.NewLabel("Username"), entryGitUsername,
+		widget.NewLabel("Email"), entryGitEmail,
+	)
 	projectContainer := container.New(
 		layout.NewFormLayout(),
 		widget.NewLabel("Directory"), entryDirectory,
@@ -283,6 +319,7 @@ func Home(a fyne.App, w fyne.Window, hugo *fork.Function) {
 				layout.NewSpacer(), projectContainer, setDirectory,
 				layout.NewSpacer(), keyContainer, setGitKey,
 				layout.NewSpacer(), gitContainer,
+				layout.NewSpacer(), authorContainer,
 				layout.NewSpacer(), clone, exchangeContainer,
 				layout.NewSpacer(), run, explorerContainer, layout.NewSpacer(),
 			),
